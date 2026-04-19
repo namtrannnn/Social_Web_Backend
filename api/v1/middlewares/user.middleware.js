@@ -11,6 +11,12 @@ module.exports.requireUser = async (req, res, next) => {
       tokenUser: tokenUser,
       deleted: false,
     }).select("-password");
+    if (!user) {
+      return res.status(401).json({
+        code: 401,
+        message: "Token không hợp lệ hoặc user không tồn tại",
+      });
+    }
     req.user = user;
     next();
   } catch (error) {
