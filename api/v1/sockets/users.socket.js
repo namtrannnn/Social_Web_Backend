@@ -184,7 +184,10 @@ module.exports = (socket) => {
         const roomChat = new RoomChat(dataRoom);
         await roomChat.save();
 
-        // Cập nhật friendList cho user hiện tại
+        // Cập nhật user hiện tại:
+        // - thêm friendList
+        // - bỏ acceptFriends
+        // - auto follow 2 chiều
         await User.updateOne(
           { _id: myUserId },
           {
@@ -197,10 +200,17 @@ module.exports = (socket) => {
             $pull: {
               acceptFriends: userId,
             },
+            $addToSet: {
+              following: userId,
+              followers: userId,
+            },
           },
         );
 
-        // Cập nhật friendList cho user còn lại
+        // Cập nhật user còn lại:
+        // - thêm friendList
+        // - bỏ requestFriends
+        // - auto follow 2 chiều
         await User.updateOne(
           { _id: userId },
           {
@@ -213,10 +223,37 @@ module.exports = (socket) => {
             $pull: {
               requestFriends: myUserId,
             },
+            $addToSet: {
+              following: myUserId,
+              followers: myUserId,
+            },
           },
         );
 
-        // Có thể emit realtime cho 2 bên nếu cần
+        // Đồng bộ lại count để tránh sai số
+        const updatedMe = await User.findById(myUserId).select(
+          "followers following",
+        );
+        await User.updateOne(
+          { _id: myUserId },
+          {
+            followersCount: (updatedMe?.followers || []).length,
+            followingCount: (updatedMe?.following || []).length,
+          },
+        );
+
+        const updatedTarget = await User.findById(userId).select(
+          "followers following",
+        );
+        await User.updateOne(
+          { _id: userId },
+          {
+            followersCount: (updatedTarget?.followers || []).length,
+            followingCount: (updatedTarget?.following || []).length,
+          },
+        );
+
+        // Realtime cho 2 bên
         global._io.to(myUserId).emit("SERVER_ACCEPT_FRIEND_SUCCESS", {
           userId: userId,
           roomChatId: roomChat._id,
