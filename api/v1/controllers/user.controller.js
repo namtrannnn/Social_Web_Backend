@@ -48,6 +48,7 @@ module.exports.register = async (req, res) => {
 // [POST] api/v1/user/login
 module.exports.login = async (req, res) => {
   try {
+    const test = "test";
     const email = req.body.email;
     const password = req.body.password;
     const user = await User.findOne({
@@ -180,7 +181,7 @@ module.exports.resetPassword = async (req, res) => {
       },
       {
         password: md5(password),
-      }
+      },
     );
     res.json({
       code: 200,
