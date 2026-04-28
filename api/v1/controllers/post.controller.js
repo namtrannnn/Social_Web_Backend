@@ -2,6 +2,25 @@ const Post = require("../models/post.model");
 const User = require("../models/user.model");
 const Like = require("../models/postLike.model");
 const uploadStreamToCloudinary = require("../../../helpers/cloudinary.helper");
+const mongoose = require("mongoose");
+
+const { canViewPost } = require("../../../helpers/postVisibility.helper");
+const {
+  parseAllowedUsers,
+  normalizeVisibility,
+  extractHashtags,
+} = require("../../../helpers/postUtils.helper");
+
+const {
+  calculatePostScore,
+  calculateFreshnessScore,
+  calculateAffinityScore,
+  calculateInterestMatchScore,
+  calculateSourceBonus,
+  uniquePostsById,
+  attachSourceType,
+  getUserInterestHashtags,
+} = require("../../../helpers/postScore.helper");
 
 // [POST] /api/v1/post/create
 module.exports.createPost = async (req, res) => {
@@ -153,12 +172,6 @@ module.exports.createPost = async (req, res) => {
   }
 };
 
-function extractHashtags(text) {
-  if (!text) return [];
-  const matches = text.match(/#([\p{L}\p{N}_]+)/gu) || [];
-  return [...new Set(matches.map((item) => item.slice(1).toLowerCase()))];
-}
-
 // [PATCH] /api/v1/post/edit/:id
 module.exports.editPost = async (req, res) => {
   try {
@@ -296,190 +309,6 @@ module.exports.editPost = async (req, res) => {
     });
   }
 };
-
-// =========================
-// Helper: tính điểm độ mới
-// =========================
-function calculateFreshnessScore(createdAt) {
-  const now = Date.now();
-  const postTime = new Date(createdAt).getTime();
-  const diffHours = (now - postTime) / (1000 * 60 * 60);
-
-  if (diffHours <= 6) return 30;
-  if (diffHours <= 24) return 20;
-  if (diffHours <= 72) return 10;
-  if (diffHours <= 168) return 5; // 7 ngày
-
-  return 0;
-}
-
-// =========================
-// Helper: điểm ưu tiên theo nguồn
-// =========================
-function calculateSourceBonus(sourceType) {
-  switch (sourceType) {
-    case "following":
-      return 40;
-    case "interest":
-      return 20;
-    case "hot":
-      return 15;
-    default:
-      return 0;
-  }
-}
-
-// =========================
-// Helper: điểm gần gũi giữa user và author
-// =========================
-function calculateAffinityScore(post, currentUserId, followingIds = []) {
-  const authorId = post.author?._id
-    ? post.author._id.toString()
-    : post.author.toString();
-
-  const currentUserIdStr = currentUserId.toString();
-  const followingIdStrings = followingIds.map((id) => id.toString());
-
-  if (authorId === currentUserIdStr) return 5;
-  if (followingIdStrings.includes(authorId)) return 3;
-
-  return 0;
-}
-
-// =========================
-// Helper: điểm khớp sở thích
-// =========================
-function calculateInterestMatchScore(post, userInterestHashtags = []) {
-  if (!Array.isArray(post.hashtags) || post.hashtags.length === 0) return 0;
-  if (!Array.isArray(userInterestHashtags) || userInterestHashtags.length === 0)
-    return 0;
-
-  const userInterestSet = new Set(userInterestHashtags);
-  let matchedCount = 0;
-
-  for (const tag of post.hashtags) {
-    if (userInterestSet.has(tag)) {
-      matchedCount += 1;
-    }
-  }
-
-  return matchedCount;
-}
-
-// =========================
-// Helper: tính tổng điểm bài viết
-// =========================
-function calculatePostScore(
-  post,
-  currentUserId,
-  followingIds = [],
-  userInterestHashtags = [],
-) {
-  const likesCount = post.likesCount || 0;
-  const commentsCount = post.commentsCount || 0;
-  const savesCount = post.savesCount || 0;
-
-  const sourceBonus = calculateSourceBonus(post.sourceType);
-  const affinityScore = calculateAffinityScore(
-    post,
-    currentUserId,
-    followingIds,
-  );
-  const interestMatchScore = calculateInterestMatchScore(
-    post,
-    userInterestHashtags,
-  );
-  const freshnessScore = calculateFreshnessScore(post.createdAt);
-
-  const score =
-    sourceBonus +
-    4 * likesCount +
-    6 * commentsCount +
-    8 * savesCount +
-    10 * affinityScore +
-    7 * interestMatchScore +
-    freshnessScore;
-
-  return {
-    ...post,
-    score,
-    scoreDetail: {
-      sourceBonus,
-      likesCount,
-      commentsCount,
-      savesCount,
-      affinityScore,
-      interestMatchScore,
-      freshnessScore,
-    },
-  };
-}
-
-// =========================
-// Helper: bỏ trùng bài viết theo _id
-// Nếu trùng, giữ bài có score nguồn ưu tiên hơn
-// =========================
-function uniquePostsById(posts) {
-  const map = new Map();
-
-  for (const post of posts) {
-    const key = post._id.toString();
-
-    if (!map.has(key)) {
-      map.set(key, post);
-      continue;
-    }
-
-    const existingPost = map.get(key);
-    const oldBonus = calculateSourceBonus(existingPost.sourceType);
-    const newBonus = calculateSourceBonus(post.sourceType);
-
-    if (newBonus > oldBonus) {
-      map.set(key, post);
-    }
-  }
-
-  return [...map.values()];
-}
-
-// =========================
-// Helper: lấy hashtag quan tâm của user
-// Tạm lấy từ bài viết gần đây của chính user
-// Sau này có thể nâng cấp từ like/save/view
-// =========================
-async function getUserInterestHashtags(userId) {
-  const myRecentPosts = await Post.find({
-    author: userId,
-    status: "active",
-  })
-    .select("hashtags")
-    .sort({ createdAt: -1 })
-    .limit(20)
-    .lean();
-
-  const hashtagMap = new Map();
-
-  for (const post of myRecentPosts) {
-    for (const tag of post.hashtags || []) {
-      hashtagMap.set(tag, (hashtagMap.get(tag) || 0) + 1);
-    }
-  }
-
-  return [...hashtagMap.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 10)
-    .map((item) => item[0]);
-}
-
-// =========================
-// Helper: gắn sourceType cho bài viết
-// =========================
-function attachSourceType(posts, sourceType) {
-  return posts.map((post) => ({
-    ...post.toObject(),
-    sourceType,
-  }));
-}
 
 // =========================
 // [GET] /api/v1/post/feed
@@ -1003,87 +832,39 @@ module.exports.getRelatedPosts = async (req, res) => {
   }
 };
 
-function normalizeObjectIdArray(arr = []) {
-  return arr.map((item) => item.toString());
-}
+exports.sharePost = async (req, res) => {
+  try {
+    const { postId } = req.params;
 
-function isOwner(viewerId, authorId) {
-  if (!viewerId || !authorId) return false;
-  return viewerId.toString() === authorId.toString();
-}
+    const post = await Post.findByIdAndUpdate(
+      postId,
+      { $inc: { sharesCount: 1 } },
+      { new: true },
+    );
 
-function isFollower(viewerId, author) {
-  if (!viewerId || !author) return false;
-  const followers = normalizeObjectIdArray(author.followers || []);
-  return followers.includes(viewerId.toString());
-}
-
-function isFriend(viewerId, author) {
-  if (!viewerId || !author) return false;
-  const friendIds = (author.friendList || []).map((item) =>
-    item.user_id?.toString(),
-  );
-  return friendIds.includes(viewerId.toString());
-}
-
-function isAllowedCustomUser(viewerId, post) {
-  if (!viewerId || !post) return false;
-  const allowedUsers = normalizeObjectIdArray(post.allowedUsers || []);
-  return allowedUsers.includes(viewerId.toString());
-}
-
-function canViewPost(post, viewerId, author) {
-  if (!post || !author) return false;
-
-  if (isOwner(viewerId, author._id)) return true;
-
-  switch (post.visibility) {
-    case "public":
-      return true;
-
-    case "followers":
-      return isFollower(viewerId, author);
-
-    case "friends":
-      return isFriend(viewerId, author);
-
-    case "private":
-      return false;
-
-    case "custom":
-      return isAllowedCustomUser(viewerId, post);
-
-    default:
-      return false;
-  }
-}
-
-function parseAllowedUsers(raw) {
-  if (raw === undefined) return undefined;
-
-  let allowedUsers = raw;
-
-  if (typeof allowedUsers === "string") {
-    try {
-      allowedUsers = JSON.parse(allowedUsers);
-    } catch {
-      allowedUsers = [];
+    if (!post) {
+      return res.status(404).json({
+        success: false,
+        message: "Post không tồn tại",
+      });
     }
+
+    return res.json({
+      success: true,
+      message: "Đã chia sẻ bài viết",
+      data: {
+        postId: post._id,
+        sharesCount: post.sharesCount,
+      },
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
   }
-
-  if (!Array.isArray(allowedUsers)) return [];
-
-  return [...new Set(allowedUsers.map((id) => id.toString()))]
-    .filter((id) => mongoose.Types.ObjectId.isValid(id))
-    .map((id) => new mongoose.Types.ObjectId(id));
-}
-
-function normalizeVisibility(rawVisibility) {
-  const valid = ["public", "followers", "friends", "private", "custom"];
-  const visibility =
-    typeof rawVisibility === "string" ? rawVisibility : "public";
-  return valid.includes(visibility) ? visibility : "public";
-}
+};
 
 async function updateLastAudienceSetting(
   userId,
