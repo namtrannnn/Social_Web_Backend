@@ -4,9 +4,8 @@ const router = express.Router();
 const userMiddleware = require("../middlewares/user.middleware.js");
 
 const upload = require("../middlewares/upload.middleware");
-const controller = require("../controllers/post.controller.js");
 
-router.get("/", userMiddleware.requireUser, controller.index);
+const controller = require("../controllers/post.controller.js");
 
 router.post(
   "/create",
@@ -18,6 +17,7 @@ router.post(
 router.patch("/edit/:id", userMiddleware.requireUser, controller.editPost);
 
 router.get("/feed", userMiddleware.requireUser, controller.getFeedPosts);
+router.get("/me", userMiddleware.requireUser, controller.getMyPosts);
 
 router.get("/:id", userMiddleware.requireUser, controller.detailPost);
 
@@ -29,8 +29,6 @@ router.get(
   controller.getPostsByUser,
 );
 
-router.get("/me", userMiddleware.requireUser, controller.getMyPosts);
-
 router.get(
   "/related/:id",
   userMiddleware.requireUser,
@@ -40,5 +38,7 @@ router.get(
 router.post("/pin/:id", userMiddleware.requireUser, controller.pinPost);
 
 router.delete("/pin/:id", userMiddleware.requireUser, controller.unpinPost);
+
+router.post("/share/:postId", userMiddleware.requireUser, controller.sharePost);
 
 module.exports = router;

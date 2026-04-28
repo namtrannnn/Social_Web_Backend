@@ -3,7 +3,7 @@ const Comment = require("../models/postComment.model");
 const Post = require("../models/post.model");
 const User = require("../models/user.model");
 
-const { canViewPost } = require("../../helpers/postVisibility.helper");
+const { canViewPost } = require("../../../helpers/postVisibility.helper");
 async function finalizeExpiredPendingDeleteComments(postId = null) {
   const now = new Date();
 
@@ -100,6 +100,7 @@ module.exports.createComment = async (req, res) => {
 
       parent = await Comment.findOne({
         _id: parentComment,
+        post: postId,
         status: "active",
       });
 
@@ -154,8 +155,6 @@ module.exports.createComment = async (req, res) => {
   }
 };
 
-// =========================
-// [GET] /api/v1/post/comment/:postId
 // =========================
 // [GET] /api/v1/post/comment/:postId
 module.exports.getCommentsByPost = async (req, res) => {
@@ -322,7 +321,6 @@ module.exports.hideComment = async (req, res) => {
   }
 };
 
-// [PATCH] /api/v1/post/comment/edit/:commentId
 // [PATCH] /api/v1/post/comment/edit/:commentId
 module.exports.editComment = async (req, res) => {
   try {

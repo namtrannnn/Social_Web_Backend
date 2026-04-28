@@ -2,7 +2,7 @@ const mongoose = require("mongoose");
 const Like = require("../models/postLike.model");
 const Post = require("../models/post.model");
 
-const { canViewPost } = require("../../helpers/postVisibility.helper");
+const { canViewPost } = require("../../../helpers/postVisibility.helper");
 
 // [POST] /api/v1/post/toggle-like/:postId
 module.exports.toggleLike = async (req, res) => {
